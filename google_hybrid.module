@@ -1,0 +1,207 @@
+<?php
+/**
+ * @file
+ * Hybrid Authentication (OpenId + OAuth) for Google Data API
+ * 
+ * References:
+ * http://code.google.com/apis/accounts/docs/OpenID.html
+ * http://step2.googlecode.com/svn/spec/openid_oauth_extension/latest/openid_oauth_extension.html
+ */
+
+/**
+ * Implementation of hook_menu.
+ */
+function google_hybrid_menu() {
+  $items['openid/google/start'] = array(
+    'title' => 'Google Authentication',
+    'description' => 'OpenID login with Google Hybrid authentication',
+    'page callback' => 'google_hybrid_start_page',
+    'access callback' => 'user_is_anonymous',
+    //'type' => MENU_CALLBACK,
+  );
+  $items['openid/google/authenticate'] = array(
+    'title' => 'Google Authentication',
+    'description' => 'OpenID login with Google Hybrid authentication',
+    'page callback' => 'google_hybrid_authentication_page',
+    'access callback' => TRUE, //'user_is_anonymous',
+    'type' => MENU_CALLBACK,
+  );
+  return $items;
+}
+
+/**
+ * Start Google authentication
+ * 
+ * Note: If you've been using both OpenID and OAuth separately, you may be able to use the same domain
+ *  registration as long as the OpenID realm parameter value matches the OAuth consumer  parameter value. 
+ *  If the values don't match, either re-register a domain consistent with the OpenID realm value, 
+ *  or change the value of realm. However, changing the realm may not be a viable option if you have 
+ *  existing users with OpenID.
+ *  From http://code.google.com/apis/accounts/docs/OpenID.html
+ */
+function google_hybrid_start_page() {
+  $request = array(
+    'openid_identifier' => 'https://www.google.com/accounts/o8/id',
+    //'openid.return_to' => url("http://reyero.net/googleoauth"),
+    'openid.return_to' => url('openid/google/authenticate', array('absolute' => TRUE, 'query' => 'destination=')),
+  );
+  $request['openid.ns'] = 'http://specs.openid.net/auth/2.0';
+  // Only if we have a consumer set up we go for the whole Hybrid thing
+  /*
+  if ($consumer = oauth_google_get_consumer()) {
+    $request['openid.realm'] = $consumer->key;
+    //$request['openid.ns.oauth'] = "http://specs.openid.net/extensions/oauth/1.0";
+    $request['openid.ns.oauth'] = "http://specs.openid.net/extensions/oauth/1.0";
+    $request['openid.oauth.consumer'] = $consumer->key;
+    $request['openid.oauth.scope'] = oauth_google_get_scope();
+  }
+  */
+  google_hybrid_openid_begin($request['openid_identifier'], $request['openid.return_to'], $request); 
+}
+
+/**
+ * Authentication callback. Parse OpenID + OAuth parameters
+ */
+function google_hybrid_authentication_page() {
+  $result = openid_complete();
+  dsm($result);
+  drupal_goto();
+}
+
+/**
+* Implementation of hook_openid().
+*
+* Request OAuth token.
+*/
+function google_hybrid_openid($op, $request) {
+  $values = array();
+  if ($op == 'request') {
+    //dsm($request);
+    if ($consumer = oauth_google_get_consumer()) {
+      //$values['openid.realm'] = 'http://' . $consumer->key;
+      $values['openid.realm'] = 'http://local.reyero.net';
+      // Required for hybrid auth
+      $values['openid.ns.ui'] = "http://specs.openid.net/extensions/ui/1.0";
+      $values['openid.ns.pape'] = "http://specs.openid.net/extensions/pape/1.0";
+      // AX
+      $values['openid.ns.ax'] = "http://openid.net/srv/ax/1.0";
+      $values['openid.ax.mode'] = 'fetch_request';
+      $values['openid.ax.required'] ="email,first,last,country";
+      $values['openid.ax.type.country'] = "http://axschema.org/contact/country/home";
+      $values['openid.ax.type.first'] = "http://axschema.org/namePerson/first";
+      $values['openid.ax.type.last'] = "http://axschema.org/namePerson/last";
+      $values['openid.ax.type.email'] = "http://axschema.org/contact/email";
+      // OAuth extension
+      $values['openid.ns.oauth'] = "http://specs.openid.net/extensions/oauth/1.0";
+      $values['openid.oauth.consumer'] = $consumer->key;
+      $values['openid.oauth.scope'] = oauth_google_get_scope();
+      // Hacking return_to
+      //$values['openid.return_to'] = url("http://reyero.net/googleoauth");
+    }
+    //dsm($values);
+  }
+  return $values;
+}
+/**
+ * Rewritten openid_begin()
+ * 
+ * The initial step of OpenID authentication responsible for the following:
+ *  - Perform discovery on the claimed OpenID.
+ *  - If possible, create an association with the Provider's endpoint.
+ *  - Create the authentication request.
+ *  - Perform the appropriate redirect.
+ *
+ * @param $claimed_id The OpenID to authenticate
+ * @param $return_to The endpoint to return to from the OpenID Provider
+ */
+function google_hybrid_openid_begin($claimed_id, $return_to = '', $form_values = array()) {
+  module_load_include('inc', 'openid');
+
+  $claimed_id = _openid_normalize($claimed_id);
+
+  $services = openid_discovery($claimed_id);
+  if (count($services) == 0) {
+    form_set_error('openid_identifier', t('Sorry, that is not a valid OpenID. Please ensure you have spelled your ID correctly.'));
+    return;
+  }
+dsm($services);
+  // Store discovered information in the users' session so we don't have to rediscover.
+  $_SESSION['openid']['service'] = $services[0];
+  // Store the claimed id
+  $_SESSION['openid']['claimed_id'] = $claimed_id;
+  // Store the login form values so we can pass them to
+  // user_exteral_login later.
+  $_SESSION['openid']['user_login_values'] = $form_values;
+
+  $op_endpoint = $services[0]['uri'];
+  // If bcmath is present, then create an association
+  $assoc_handle = '';
+  if (function_exists('bcadd')) {
+    $assoc_handle = openid_association($op_endpoint);
+  }
+
+  // Now that there is an association created, move on
+  // to request authentication from the IdP
+  // First check for LocalID. If not found, check for Delegate. Fall
+  // back to $claimed_id if neither is found.
+  if (!empty($services[0]['localid'])) {
+    $identity = $services[0]['localid'];
+  }
+  else if (!empty($services[0]['delegate'])) {
+    $identity = $services[0]['delegate'];
+  }
+  else {
+    $identity = $claimed_id;
+  }
+
+  if (isset($services[0]['types']) && is_array($services[0]['types']) && in_array(OPENID_NS_2_0 .'/server', $services[0]['types'])) {
+    $claimed_id = $identity = 'http://specs.openid.net/auth/2.0/identifier_select';
+  }
+  $authn_request = google_hybrid_openid_authentication_request($claimed_id, $identity, $return_to, $assoc_handle, $services[0]['version']);
+dsm($authn_request);
+  // For Google it will be version 2
+  if ($services[0]['version'] == 2) {
+    openid_redirect($op_endpoint, $authn_request);
+  }
+  else {
+    openid_redirect_http($op_endpoint, $authn_request);
+  }
+}
+
+/**
+ * Rewrite of openid_authentication_request()
+ * 
+ * @param unknown_type $claimed_id
+ * @param unknown_type $identity
+ * @param unknown_type $return_to
+ * @param unknown_type $assoc_handle
+ * @param unknown_type $version
+ */
+function google_hybrid_openid_authentication_request($claimed_id, $identity, $return_to = '', $assoc_handle = '', $version = 2) {
+  module_load_include('inc', 'openid');
+
+  $ns = ($version == 2) ? OPENID_NS_2_0 : OPENID_NS_1_0;
+  $request =  array(
+    'openid.ns' => $ns,
+    'openid.mode' => 'checkid_setup',
+    'openid.identity' => $identity,
+    'openid.claimed_id' => $claimed_id,
+    'openid.assoc_handle' => $assoc_handle,
+    'openid.return_to' => $return_to,
+  );
+
+  if ($version == 2) { // Yup
+    $request['openid.realm'] = url('', array('absolute' => TRUE));
+  }
+  else {
+    $request['openid.trust_root'] = url('', array('absolute' => TRUE));
+  }
+
+  // Simple Registration
+  $request['openid.sreg.required'] = 'nickname,email';
+  $request['openid.ns.sreg'] = "http://openid.net/extensions/sreg/1.1";
+
+  $request = array_merge($request, module_invoke_all('openid', 'request', $request));
+
+  return $request;
+}
