@@ -14,6 +14,8 @@ define('GOOGLE_HYBRID_START_PATH', 'openid/google/start');
 define('GOOGLE_HYBRID_OPENID_IDENTIFIER', 'https://www.google.com/accounts/o8/id');
 // OpenID OAuth namespace
 define('GOOGLE_HYBRID_OPENID_OAUTH', 'http://specs.openid.net/extensions/oauth/1.0');
+// OpenID AX namespace
+define('GOOGLE_HYBRID_OPENID_AX', 'http://openid.net/srv/ax/1.0');
 
 /**
  * Implementation of hook_menu.
@@ -41,12 +43,31 @@ function google_hybrid_menu() {
  * Implementation of hook_form_alter : adds OpenID login to the login forms.
  */
 function google_hybrid_form_alter(&$form, $form_state, $form_id) {
-  if ($form_id == 'user_login_block' || $form_id == 'user_login') {
-    $items[] = l(t('Log in using your Google account'), GOOGLE_HYBRID_START_PATH);
-    $form['google_hybrid'] = array(
-      '#value' => theme('item_list', $items),
-      '#weight' => 1,
-    );    
+  switch ($form_id) {
+    case 'user_login_block':
+    case 'user_login';
+      $items[] = l(t('Log in using your Google account'), GOOGLE_HYBRID_START_PATH);
+      $form['google_hybrid'] = array(
+        '#value' => theme('item_list', $items),
+        '#weight' => 1,
+      );
+      break;
+    case 'oauth_google_admin_settings_form':
+      $form['hybrid'] = array(
+        '#title' => t('Hybrid authentication'),
+        '#type' => 'fieldset',
+        '#collapsible' => TRUE,
+        '#weight' => -1,
+      );
+      $form['hybrid']['google_hybrid_user_register'] = array(
+        '#type' => 'radios', '#title' => t('Account registration'), 
+        '#default_value' => variable_get('google_hybrid_user_register', 0), 
+        '#options' => array(
+            t('Use site default behavior for new user accounts.'), 
+            t('Enable quick registration for authenticated users without administrator approval nor e-mail verification.'),
+         ),
+      );
+      break;
   }
 }
 
@@ -54,6 +75,9 @@ function google_hybrid_form_alter(&$form, $form_state, $form_id) {
  * Start Google authentication
  */
 function google_hybrid_start_page() {
+  // First of all, clean stored parameters if any
+  google_hybrid_store_params();
+  // Now build a Google OpenID request and go for it
   $request = array(
     'openid_identifier' => GOOGLE_HYBRID_OPENID_IDENTIFIER,
     //'openid.return_to' => url("http://reyero.net/googleoauth"),
@@ -136,7 +160,7 @@ function google_hybrid_openid($op, $request) {
       $values['openid.ns.ui'] = "http://specs.openid.net/extensions/ui/1.0";
       $values['openid.ns.pape'] = "http://specs.openid.net/extensions/pape/1.0";
       // AX
-      $values['openid.ns.ax'] = "http://openid.net/srv/ax/1.0";
+      $values['openid.ns.ax'] = GOOGLE_HYBRID_OPENID_AX;
       $values['openid.ax.mode'] = 'fetch_request';
       $values['openid.ax.required'] ="email,first,last,country";
       $values['openid.ax.type.country'] = "http://axschema.org/contact/country/home";
