@@ -31,6 +31,7 @@ function google_hybrid_menu() {
     'description' => 'OpenID login with Google Hybrid authentication',
     'page callback' => 'google_hybrid_authentication_page',
     'access callback' => 'user_is_anonymous',
+    'file' => 'google_hybrid.pages.inc',
     'type' => MENU_CALLBACK,
   );
   return $items;
@@ -61,34 +62,6 @@ function google_hybrid_start_page() {
   $request['openid.ns'] = 'http://specs.openid.net/auth/2.0';
   // Oauth parameters will added later, on hook_openid
   openid_begin($request['openid_identifier'], $request['openid.return_to'], $request); 
-}
-
-/**
- * Authentication callback. Parse OpenID + OAuth parameters
- * 
- * Remae of openid_authentication_page()
- */
-function google_hybrid_authentication_page() {
-  $result = openid_complete();
-  switch ($result['status']) {
-    case 'success':
-      // This will store the OAuth parameters in session
-      $params = google_hybrid_response_params($result);
-      if ($params && ($consumer = google_hybrid_oauth_consumer())) {
-         // We store the consumer key too, to be used later
-        $params['consumer'] = $consumer->key;
-        google_hybrid_store_params($params);
-      }
-      // Resume usual OpenID authentication
-      return openid_authentication($result);
-    case 'failed':
-      drupal_set_message(t('OpenID login failed.'), 'error');
-      break;
-    case 'cancel':
-      drupal_set_message(t('OpenID login cancelled.'));
-      break;
-  }
-  drupal_goto();
 }
 
 /**
@@ -142,23 +115,6 @@ function google_hybrid_store_params($params = NULL) {
 }
 
 /**
- * Get the OAuth part from the response
- */
-function google_hybrid_response_params($result) {
-  // Get the key for the OAuth namespace. This can change depending on OpenID parameters
-  // It should be 'ext1' or 'ext2' but it's possible also that we get no OAuth response
-  if ($key = array_search(GOOGLE_HYBRID_OPENID_OAUTH, $result)) {   
-    $parts = explode('.', $key);
-    $ns = $parts[2];
-    $params = array(
-      'request_token' => $result["openid.$ns.request_token"],
-      'scope' => $result["openid.$ns.scope"],
-    );
-    return $params;
-  }  
-}
-
-/**
 * Implementation of hook_openid().
 *
 * Request OAuth token.
@@ -180,7 +136,6 @@ function google_hybrid_openid($op, $request) {
       $values['openid.ns.ui'] = "http://specs.openid.net/extensions/ui/1.0";
       $values['openid.ns.pape'] = "http://specs.openid.net/extensions/pape/1.0";
       // AX
-/*
       $values['openid.ns.ax'] = "http://openid.net/srv/ax/1.0";
       $values['openid.ax.mode'] = 'fetch_request';
       $values['openid.ax.required'] ="email,first,last,country";
@@ -188,7 +143,6 @@ function google_hybrid_openid($op, $request) {
       $values['openid.ax.type.first'] = "http://axschema.org/namePerson/first";
       $values['openid.ax.type.last'] = "http://axschema.org/namePerson/last";
       $values['openid.ax.type.email'] = "http://axschema.org/contact/email";
-*/
       // OAuth extension
       $values['openid.ns.oauth'] = GOOGLE_HYBRID_OPENID_OAUTH;
       $values['openid.oauth.consumer'] = $consumer->key;
@@ -201,9 +155,12 @@ function google_hybrid_openid($op, $request) {
 }
 
 /**
- * Get consumer
+ * Get consumer. We use default consumer from oauth_google module
  */
 function google_hybrid_oauth_consumer() {
-  // We try with this one for now
-  return oauth_google_get_consumer();
+  static $consumer;
+  if (!isset($consumer)) {
+    $consumer = oauth_google_get_consumer();
+  }
+  return $consumer;
 }
