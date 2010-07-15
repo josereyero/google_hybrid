@@ -56,16 +56,82 @@ function google_hybrid_start_page() {
     $request['openid.oauth.scope'] = oauth_google_get_scope();
   }
   */
-  google_hybrid_openid_begin($request['openid_identifier'], $request['openid.return_to'], $request); 
+  openid_begin($request['openid_identifier'], $request['openid.return_to'], $request); 
 }
 
 /**
  * Authentication callback. Parse OpenID + OAuth parameters
+ * 
+ * Remae of openid_authentication_page()
  */
 function google_hybrid_authentication_page() {
   $result = openid_complete();
-  dsm($result);
+  switch ($result['status']) {
+    case 'success':
+      // This will store the OAuth parameters in session
+      google_hybrid_store_params($result);
+      return openid_authentication($result);
+    case 'failed':
+      drupal_set_message(t('OpenID login failed.'), 'error');
+      break;
+    case 'cancel':
+      drupal_set_message(t('OpenID login cancelled.'));
+      break;
+  }
   drupal_goto();
+}
+
+/**
+ * Implementation of hook_user()
+ * 
+ * If the user is being created or after successful login, get the access token
+ */
+function google_hybrid_user($op, &$edit, &$account, $category = NULL) {
+  if (($op == 'insert' || $op == 'login') && ($params = google_hybrid_store_params())) {
+    google_hybrid_create_token($account, $params);
+  }
+}
+
+/**
+ * Get access token
+ */
+function google_hybrid_create_token($account, $params) {
+  $consumer = GoogleOAuthConsumer::load($params['consumer']);
+  // Request token with empty secret, http://step2.googlecode.com/svn/spec/openid_oauth_extension/latest/openid_oauth_extension.html
+  $request_token = new GoogleOAuthToken($params['request_token'], '', array('type' => 'request', 'uid' => $account->uid, 'consumer_key' => $consumer->key, 'authorized' => 1));
+  // Do we need to save the request token?
+  $request_token->write();
+  $client = new GoogleOAuthClient($consumer);
+  $client->setRequestToken($request_token);
+  $access_token = $client->getAccessToken();
+  $access_token->uid = $account->uid;
+  $access_token->write();
+  drupal_set_message(t('The application has been authorized and you have got an access token.'));
+}
+
+/**
+ * Parse OpenID response and store parameters in session
+ * 
+ * @todo Find the right parameters by matching 
+ *   $result['openid.ns.xxx'] == "http://specs.openid.net/extensions/oauth/1.0"
+ */
+function google_hybrid_store_params($result = NULL) {
+  $params = array();
+  if ($result) {
+    $ns = 'ext2'; // Default for google
+    $consumer = google_hybrid_oauth_consumer();
+    $params = array(
+      'request_token' => $result["openid.$ns.request_token"],
+      'scope' => $result["openid.$ns.scope"],
+      'consumer' => $consumer->key,
+    );
+    $_SESSION['google_hybrid'] = $params;
+  }
+  elseif (isset($_SESSION['google_hybrid'])) {
+    $params = $_SESSION['google_hybrid'];
+    unset($_SESSION['google_hybrid']);
+  }
+  return $params;
 }
 
 /**
@@ -77,7 +143,7 @@ function google_hybrid_openid($op, $request) {
   $values = array();
   if ($op == 'request') {
     //dsm($request);
-    if ($consumer = oauth_google_get_consumer()) {
+    if ($consumer = google_hybrid_oauth_consumer()) {
       //$values['openid.realm'] = 'http://' . $consumer->key;
       $values['openid.realm'] = 'http://local.reyero.net';
       // Required for hybrid auth
@@ -102,106 +168,11 @@ function google_hybrid_openid($op, $request) {
   }
   return $values;
 }
-/**
- * Rewritten openid_begin()
- * 
- * The initial step of OpenID authentication responsible for the following:
- *  - Perform discovery on the claimed OpenID.
- *  - If possible, create an association with the Provider's endpoint.
- *  - Create the authentication request.
- *  - Perform the appropriate redirect.
- *
- * @param $claimed_id The OpenID to authenticate
- * @param $return_to The endpoint to return to from the OpenID Provider
- */
-function google_hybrid_openid_begin($claimed_id, $return_to = '', $form_values = array()) {
-  module_load_include('inc', 'openid');
-
-  $claimed_id = _openid_normalize($claimed_id);
-
-  $services = openid_discovery($claimed_id);
-  if (count($services) == 0) {
-    form_set_error('openid_identifier', t('Sorry, that is not a valid OpenID. Please ensure you have spelled your ID correctly.'));
-    return;
-  }
-dsm($services);
-  // Store discovered information in the users' session so we don't have to rediscover.
-  $_SESSION['openid']['service'] = $services[0];
-  // Store the claimed id
-  $_SESSION['openid']['claimed_id'] = $claimed_id;
-  // Store the login form values so we can pass them to
-  // user_exteral_login later.
-  $_SESSION['openid']['user_login_values'] = $form_values;
-
-  $op_endpoint = $services[0]['uri'];
-  // If bcmath is present, then create an association
-  $assoc_handle = '';
-  if (function_exists('bcadd')) {
-    $assoc_handle = openid_association($op_endpoint);
-  }
-
-  // Now that there is an association created, move on
-  // to request authentication from the IdP
-  // First check for LocalID. If not found, check for Delegate. Fall
-  // back to $claimed_id if neither is found.
-  if (!empty($services[0]['localid'])) {
-    $identity = $services[0]['localid'];
-  }
-  else if (!empty($services[0]['delegate'])) {
-    $identity = $services[0]['delegate'];
-  }
-  else {
-    $identity = $claimed_id;
-  }
-
-  if (isset($services[0]['types']) && is_array($services[0]['types']) && in_array(OPENID_NS_2_0 .'/server', $services[0]['types'])) {
-    $claimed_id = $identity = 'http://specs.openid.net/auth/2.0/identifier_select';
-  }
-  $authn_request = google_hybrid_openid_authentication_request($claimed_id, $identity, $return_to, $assoc_handle, $services[0]['version']);
-dsm($authn_request);
-  // For Google it will be version 2
-  if ($services[0]['version'] == 2) {
-    openid_redirect($op_endpoint, $authn_request);
-  }
-  else {
-    openid_redirect_http($op_endpoint, $authn_request);
-  }
-}
 
 /**
- * Rewrite of openid_authentication_request()
- * 
- * @param unknown_type $claimed_id
- * @param unknown_type $identity
- * @param unknown_type $return_to
- * @param unknown_type $assoc_handle
- * @param unknown_type $version
+ * Get consumer
  */
-function google_hybrid_openid_authentication_request($claimed_id, $identity, $return_to = '', $assoc_handle = '', $version = 2) {
-  module_load_include('inc', 'openid');
-
-  $ns = ($version == 2) ? OPENID_NS_2_0 : OPENID_NS_1_0;
-  $request =  array(
-    'openid.ns' => $ns,
-    'openid.mode' => 'checkid_setup',
-    'openid.identity' => $identity,
-    'openid.claimed_id' => $claimed_id,
-    'openid.assoc_handle' => $assoc_handle,
-    'openid.return_to' => $return_to,
-  );
-
-  if ($version == 2) { // Yup
-    $request['openid.realm'] = url('', array('absolute' => TRUE));
-  }
-  else {
-    $request['openid.trust_root'] = url('', array('absolute' => TRUE));
-  }
-
-  // Simple Registration
-  $request['openid.sreg.required'] = 'nickname,email';
-  $request['openid.ns.sreg'] = "http://openid.net/extensions/sreg/1.1";
-
-  $request = array_merge($request, module_invoke_all('openid', 'request', $request));
-
-  return $request;
+function google_hybrid_oauth_consumer() {
+  // We try with this one for now
+  return oauth_google_get_consumer();
 }
