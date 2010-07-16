@@ -81,7 +81,7 @@ function google_hybrid_start_page() {
   $request = array(
     'openid_identifier' => GOOGLE_HYBRID_OPENID_IDENTIFIER,
     //'openid.return_to' => url("http://reyero.net/googleoauth"),
-    'openid.return_to' => url('openid/google/authenticate', array('absolute' => TRUE, 'query' => 'destination=')),
+    'openid.return_to' => url('openid/google/authenticate', array('absolute' => TRUE, 'query' => drupal_get_destination())),
   );
   $request['openid.ns'] = 'http://specs.openid.net/auth/2.0';
   // Oauth parameters will added later, on hook_openid
