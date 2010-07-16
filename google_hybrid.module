@@ -52,9 +52,9 @@ function google_hybrid_form_alter(&$form, $form_state, $form_id) {
         '#weight' => 1,
       );
       break;
-    case 'oauth_google_admin_settings_form':
+    case 'user_admin_settings':
       $form['hybrid'] = array(
-        '#title' => t('Hybrid authentication'),
+        '#title' => t('Google Hybrid authentication'),
         '#type' => 'fieldset',
         '#collapsible' => TRUE,
         '#weight' => -1,
@@ -63,7 +63,7 @@ function google_hybrid_form_alter(&$form, $form_state, $form_id) {
         '#type' => 'radios', '#title' => t('Account registration'), 
         '#default_value' => variable_get('google_hybrid_user_register', 0), 
         '#options' => array(
-            t('Use site default behavior for new user accounts.'), 
+            t('Use site default behavior for new user accounts. See the settings below.'), 
             t('Enable quick registration for authenticated users without administrator approval nor e-mail verification.'),
          ),
       );
