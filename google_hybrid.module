@@ -118,10 +118,11 @@ function google_hybrid_create_token($account, $params) {
     db_query("DELETE FROM {oauth_common_token} WHERE uid = %d AND consumer_key = '%s'", $account->uid, $consumer->key);
     $access_token->uid = $account->uid;
     $access_token->write();
-    drupal_set_message(t('The application has been authorized and you have got an access token.'));
+    watchdog('google_hybrid', 'Successfully completed hybrid authentication. Got access token.');
   }
   else {
     drupal_set_message(t('Error getting an access token.'), 'error');
+    watchdog('google_hybrid', 'Error getting access token.', array(), WATCHDOG_WARNING);
   }
 }
 
