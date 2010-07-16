@@ -77,11 +77,14 @@ function google_hybrid_form_alter(&$form, $form_state, $form_id) {
 function google_hybrid_start_page() {
   // First of all, clean stored parameters if any
   google_hybrid_store_params();
+  // Get destination that if none set will be home page. If back to the same page we get 'access denied'
+  $destination = isset($_REQUEST['destination']) ? urlencode($_REQUEST['destination']) : '';
+  
   // Now build a Google OpenID request and go for it
   $request = array(
     'openid_identifier' => GOOGLE_HYBRID_OPENID_IDENTIFIER,
     //'openid.return_to' => url("http://reyero.net/googleoauth"),
-    'openid.return_to' => url('openid/google/authenticate', array('absolute' => TRUE, 'query' => drupal_get_destination())),
+    'openid.return_to' => url('openid/google/authenticate', array('absolute' => TRUE, 'query' => 'destination=' . $destination)),
   );
   $request['openid.ns'] = 'http://specs.openid.net/auth/2.0';
   // Oauth parameters will added later, on hook_openid
