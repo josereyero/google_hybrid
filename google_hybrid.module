@@ -110,8 +110,9 @@ function google_hybrid_create_token($account, $params) {
   $request_token->write();
   $client = new GoogleOAuthClient($consumer);
   $client->setRequestToken($request_token);
-  // @todo Should we delete previous access tokens if existing?
+  // If we've got a new access token, delete previous ones for this consumer
   if ($access_token = $client->getAccessToken()) {
+    db_query("DELETE FROM {oauth_common_token} WHERE uid = %d AND consumer_key = '%s'", $account->uid, $consumer->key);
     $access_token->uid = $account->uid;
     $access_token->write();
     drupal_set_message(t('The application has been authorized and you have got an access token.'));
