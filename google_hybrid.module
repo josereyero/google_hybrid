@@ -106,18 +106,14 @@ function google_hybrid_user($op, &$edit, &$account, $category = NULL) {
  * Get access token
  */
 function google_hybrid_create_token($account, $params) {
-  $consumer = GoogleOAuthConsumer::load($params['consumer']);
+  $consumer = oauth_google_get_consumer(array('key' => $params['consumer']));
   // Request token with empty secret, http://step2.googlecode.com/svn/spec/openid_oauth_extension/latest/openid_oauth_extension.html
-  $request_token = new GoogleOAuthToken($params['request_token'], '', array('type' => 'request', 'uid' => $account->uid, 'consumer_key' => $consumer->key, 'authorized' => 1));
+  $request_token = new DrupalOAuthToken($params['request_token'], '', array('type' => 'request', 'uid' => $account->uid, 'consumer_key' => $consumer->key, 'authorized' => 1));
+  $request_token->provider_token = FALSE;
   // Do we need to save the request token?
   $request_token->write();
-  $client = new GoogleOAuthClient($consumer);
-  $client->setRequestToken($request_token);
   // If we've got a new access token, delete previous ones for this consumer
-  if ($access_token = $client->getAccessToken()) {
-    db_query("DELETE FROM {oauth_common_token} WHERE uid = %d AND consumer_key = '%s'", $account->uid, $consumer->key);
-    $access_token->uid = $account->uid;
-    $access_token->write();
+  if ($access_token = oauth_google_create_access_token($consumer, $request_token)) {
     watchdog('google_hybrid', 'Successfully completed hybrid authentication. Got access token.');
   }
   else {
@@ -176,8 +172,6 @@ function google_hybrid_openid($op, $request) {
       $values['openid.ns.oauth'] = GOOGLE_HYBRID_OPENID_OAUTH;
       $values['openid.oauth.consumer'] = $consumer->key;
       $values['openid.oauth.scope'] = oauth_google_get_scope();
-      // Hacking return_to
-      //$values['openid.return_to'] = url("http://reyero.net/googleoauth");
     }
   }
   return $values;
